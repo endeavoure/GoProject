@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"sync"
@@ -49,6 +50,21 @@ func startServer(port string) {
 	log.Println("Сервер запущен на порту:", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
+
+func randomStatus() int {
+	if rand.Intn(100) < 70 {
+		if rand.Intn(2) == 0 {
+			return http.StatusOK
+		}
+		return http.StatusAccepted
+	} else {
+		if rand.Intn(2) == 0 {
+			return http.StatusBadRequest
+		}
+		return http.StatusBadGateway
+	}
+}
+
 
 func main() {
 	err := godotenv.Load("init.env")
