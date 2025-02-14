@@ -197,7 +197,7 @@ func (c *Client) sendPostRequest(wg *sync.WaitGroup) {
 
 		log.Printf("Клиент %d: Ответ сервера %d\n", c.ID, resp.StatusCode)
 		resp.Body.Close()
-		time.Sleep(1000 * time.Millisecond)
+		time.Sleep(1000 * time.Millisecond) // можно ставить разные значения
 	}
 }
 
@@ -374,5 +374,5 @@ func main() {
 
 	server.calculateStats(client1, client2)
 
-	//select{}
+	select{}
 }
