@@ -60,7 +60,7 @@ type ServerStats struct {
 }
 
 // Конструктор клиента
-func NewClient(id int, url string) *Client {
+func newClient(id int, url string) *Client {
 	return &Client{
 		ID:    id,
 		URL:   url,
@@ -68,6 +68,7 @@ func NewClient(id int, url string) *Client {
 	}
 }
 
+// Конструктор сервера
 func newServer(opts ...Option) *Server {
 	// Задаём дефолтные значения
 	defaultOptions := Options{
@@ -362,8 +363,8 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	client1 := NewClient(1, serverURL)
-	client2 := NewClient(2, serverURL)
+	client1 := newClient(1, serverURL)
+	client2 := newClient(2, serverURL)
 
 	go client1.workerStart(&wg, 50)
 	go client2.workerStart(&wg, 50)
