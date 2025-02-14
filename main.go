@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -31,6 +32,7 @@ type Server struct {
 	Mutex       sync.Mutex
 	ReqCount	int
 	LastTime	time.Time
+	StatsJSON   []byte
 }
 
 // Определяем тип функции настройки
@@ -43,6 +45,18 @@ type Client struct {
 	ReqSent int
 	Count 	map[int]int
 	Mutex 	sync.Mutex
+}
+
+// Стата для клиента
+type Stats struct {
+	Positive int `json:"positive"`
+	Negative int `json:"negative"`
+}
+
+// Стата для сервера
+type ServerStats struct {
+	Total   Stats         `json:"total"`
+	Clients map[int]Stats `json:"clients"`
 }
 
 // Конструктор клиента
@@ -211,6 +225,35 @@ func (c *Client) workerStart(wg *sync.WaitGroup, total int) {
 	c.getStats()
 }
 
+// Калькулятор статистики по запросам
+func (s *Server) calculateStats(clients ...*Client) {
+	serverStats := ServerStats{
+		Clients: make(map[int]Stats),
+	}
+
+	for _, client := range clients {
+		clientStats := Stats{}
+		client.Mutex.Lock()
+		for code, count := range client.Count {
+			if code == http.StatusOK || code == http.StatusAccepted {
+				clientStats.Positive += count
+				serverStats.Total.Positive += count
+			} else {
+				clientStats.Negative += count
+				serverStats.Total.Negative += count
+			}
+		}
+		client.Mutex.Unlock()
+
+		serverStats.Clients[client.ID] = clientStats
+	}
+
+	s.Mutex.Lock()
+	defer s.Mutex.Unlock()
+	s.StatsJSON, _ = json.MarshalIndent(serverStats, "", "  ")
+}
+
+
 // Отправитель запросов
 // func sendPostRequest(clientID int, url string, n int, wg *sync.WaitGroup) {
 // 	defer wg.Done()
@@ -260,6 +303,14 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// Обработчик для получения статистики
+func (s *Server) statsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	s.Mutex.Lock()
+	defer s.Mutex.Unlock()
+	w.Write(s.StatsJSON)
+}
+
 // Проверщик статуса сервера
 func checkStatus(url string) {
 	statusURL := fmt.Sprintf("%s/status", url) 
@@ -278,6 +329,7 @@ func checkStatus(url string) {
 func startServer(s *Server) {
 	http.HandleFunc("/", s.handleRequest)
 	http.HandleFunc("/status", s.statusHandler)
+	http.HandleFunc("/stats", s.statsHandler)
 
 	log.Printf("Сервер запущен на порту: %d\n", s.Opts.Port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", s.Opts.Port), nil))
@@ -318,4 +370,8 @@ func main() {
 	go checkStatus(serverURL)
 
 	wg.Wait()
+
+	server.calculateStats(client1, client2)
+
+	//select{}
 }
