@@ -25,10 +25,12 @@ type Options struct {
 
 // Сервер с настройками
 type Server struct {
-	Opts 	  Options
-	Responses []int
-	Index     int
-	Mutex     sync.Mutex
+	Opts 	    Options
+	Responses   []int
+	Index       int
+	Mutex       sync.Mutex
+	ReqCount	int
+	LastTime	time.Time
 }
 
 // Определяем тип функции настройки
@@ -39,8 +41,17 @@ type Client struct {
 	ID 		int
 	URL 	string
 	ReqSent int
-	Count 	sync.Map
+	Count 	map[int]int
 	Mutex 	sync.Mutex
+}
+
+// Конструктор клиента
+func NewClient(id int, url string) *Client {
+	return &Client{
+		ID:    id,
+		URL:   url,
+		Count: make(map[int]int),
+	}
 }
 
 func newServer(opts ...Option) *Server {
@@ -142,7 +153,7 @@ func generateResp(amount int) []int {
 	for i := 0; i < amount * 70/100; i++ {
 		responses = append(responses, positive[rand.Intn(len(positive))])
 	}
-	for i := 0; i < amount*30/100; i++ {
+	for i := 0; i < amount * 30/100; i++ {
 		responses = append(responses, negative[rand.Intn(len(negative))])
 	}
 
@@ -166,23 +177,23 @@ func (c *Client) sendPostRequest(wg *sync.WaitGroup) {
 		// Обновляем статы
 		c.Mutex.Lock()
 		c.ReqSent++
-		cnt, _ := c.Count.LoadOrStore(resp.StatusCode, 0)
-		c.Count.Store(resp.StatusCode, cnt.(int)+1)
+		c.Count[resp.StatusCode]++
 		c.Mutex.Unlock()
 
-		log.Printf("Client %d: Ответ сервера %d\n", c.ID, resp.StatusCode)
+		log.Printf("Клиент %d: Ответ сервера %d\n", c.ID, resp.StatusCode)
 		resp.Body.Close()
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(1000 * time.Millisecond)
 	}
 }
 
 // Вывод статистики
 func (c *Client) getStats() {
 	fmt.Printf("Клиент %d: Отправлено запросов: %d\n", c.ID, c.ReqSent)
-	c.Count.Range(func(key, value interface{}) bool {
-		fmt.Printf("Статус %d: %d раз(а)\n", key.(int), value.(int))
-		return true
-	})
+	c.Mutex.Lock()
+	for code, count := range c.Count {
+		fmt.Printf("Статус %d: %d раз(а)\n", code, count)
+	}
+	c.Mutex.Unlock()
 }
 
 // Запуск воркеров
@@ -222,6 +233,18 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	s.Mutex.Lock()
 	defer s.Mutex.Unlock()
 
+	if time.Since(s.LastTime) >= time.Second {
+		s.ReqCount = 0
+		s.LastTime = time.Now()
+	}
+
+	if s.ReqCount >= 5 {
+		http.Error(w, "Превышен лимит запросов", http.StatusTooManyRequests)
+		return
+	}
+
+	s.ReqCount++
+
 	if s.Index >= len(s.Responses) {
 		http.Error(w, "Ответы кончились", http.StatusInternalServerError)
 		return
@@ -232,15 +255,20 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 }
 
+// Обработчик для проверки статуса
+func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+
 // Проверщик статуса сервера
 func checkStatus(url string) {
+	statusURL := fmt.Sprintf("%s/status", url) 
 	for {
-		resp, err := http.Get(url)
+		_, err := http.Get(statusURL)
 		if err != nil {
 			log.Printf("Сервер недоступен. Ошибка %v.\n", err)
 		} else {
-			log.Printf("Сервер отвечает. Статус: %v.\n", resp.Status)
-			resp.Body.Close()
+			log.Print("Сервер отвечает.\n")
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -249,6 +277,8 @@ func checkStatus(url string) {
 // Стартер сервера
 func startServer(s *Server) {
 	http.HandleFunc("/", s.handleRequest)
+	http.HandleFunc("/status", s.statusHandler)
+
 	log.Printf("Сервер запущен на порту: %d\n", s.Opts.Port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", s.Opts.Port), nil))
 }
@@ -264,8 +294,11 @@ func main() {
 	// Выводим настройки сервера
 	fmt.Printf("Сервер запущен с настройками: %+v\n", server.Opts)
 
+	clientResponses1 := generateResp(100)
+	clientResponses2 := generateResp(100)
+
 	// Заводим 200 ответов (по 100 на клиент)
-	server.Responses = generateResp(200)
+	server.Responses = append(clientResponses1, clientResponses2...)
 
 	// Запускаем сервер в горутине
 	go startServer(server)
@@ -277,12 +310,12 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	client1 := &Client{ID: 1, URL: serverURL}
-	client2 := &Client{ID: 2, URL: serverURL}
+	client1 := NewClient(1, serverURL)
+	client2 := NewClient(2, serverURL)
 
 	go client1.workerStart(&wg, 50)
 	go client2.workerStart(&wg, 50)
-	// go checkStatus(serverURL)
+	go checkStatus(serverURL)
 
 	wg.Wait()
 }
